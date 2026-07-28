@@ -1,4 +1,17 @@
 # =============================================================================
+# IMPORT LIBRARIES
+# =============================================================================
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.metrics import (
+    precision_recall_curve,
+    roc_curve,
+    confusion_matrix
+)
+
+# =============================================================================
 # DECISION THRESHOLD OPTIMIZATION
 # =============================================================================
 

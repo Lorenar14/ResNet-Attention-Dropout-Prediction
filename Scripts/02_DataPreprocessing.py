@@ -26,7 +26,7 @@ print_title(" DATA LOADING AND ANONYMIZATION")
 # Dataset Configuration
 # =============================================================================
 
-DATASET_PATH = DATA_DIR / "anonymized_student_dataset.csv"
+DATASET_PATH = DATA_DIR / "Student_Dataset.csv"
 
 MASTER_KEY_FILE = "Master_Key.xlsx"
 

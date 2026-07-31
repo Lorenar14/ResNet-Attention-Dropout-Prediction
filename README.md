@@ -4,8 +4,7 @@
 Deep learning framework for university student dropout prediction using a ResNet-Attention-based Early Warning System and institutional data from Politécnico Colombiano Jaime Isaza Cadavid (Colombia). The proposed methodology integrates data preprocessing, exploratory data analysis, survival probability analysis, class balancing using SMOTE, hyperparameter optimization with Optuna, and a ResNet-Attention deep learning architecture as the main predictive model. Logistic Regression, Random Forest, and XGBoost were implemented as baseline models for comparative performance evaluation.
 
 
-## SCRIPTS
-
+SCRIPTS: 
 1_DataPreprocessing.ipynb: Performs data cleaning, anonymization, preprocessing, feature engineering, and target variable construction.
 
 2_ExploratoryDataAnalysis.ipynb: Generates descriptive statistics and exploratory visualizations, including the correlation matrix, pairplot, boxplots, and survival probability analysis.
@@ -20,7 +19,7 @@ Deep learning framework for university student dropout prediction using a ResNet
 
 7_DropoutPrediction.ipynb: Applies the trained ResNet-Attention model to predict the dropout risk of new university students.
 
-MODELS : The trained ResNet-Attention model and the baseline Machine Learning models are stored in the Models folder.
+MODELS: The trained ResNet-Attention model and the baseline Machine Learning models are stored in the Models folder.
 
 IMPORTANT: Update the dataset paths before running the scripts. The original institutional dataset is not publicly available due to privacy and confidentiality restrictions.
 

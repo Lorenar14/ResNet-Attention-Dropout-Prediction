@@ -1,88 +1,27 @@
-# =============================================================================
-# IMPORT LIBRARIES
-# =============================================================================
+DECISION THRESHOLD OPTIMIZATION
 
-import numpy as np
-import matplotlib.pyplot as plt
+val_probabilities = neural_model.predict(X_val, verbose=0).ravel()
+precisions, recalls, thresholds = precision_recall_curve(y_val, val_probabilities)
+p_subset, r_subset = precisions[:-1], recalls[:-1]
+f1_harmonic_scores = np.divide(2 * p_subset * r_subset, p_subset + r_subset, out=np.zeros_like(p_subset), where=(p_subset + r_subset) != 0)
+optimal_threshold_idx = np.argmax(f1_harmonic_scores)
+optimal_decision_threshold = float(thresholds[optimal_threshold_idx])
 
-from sklearn.metrics import (
-    precision_recall_curve,
-    roc_curve,
-    confusion_matrix
-)
+fig, ax = plt.subplots(figsize=(6.5, 4.5))
+ax.plot(thresholds, f1_harmonic_scores, color=PALETTE_BLUE_DARK, linewidth=2.0, label="F1-Score")
+ax.axvline(optimal_decision_threshold, color=PALETTE_RED_DARK, linestyle="--", linewidth=1.5, label=f"Optimal Threshold ({optimal_decision_threshold:.4f})")
+ax.set_xlabel("Decision Threshold")
+ax.set_ylabel("F1-Score")
+ax.set_title("Decision Threshold Optimization", pad=8)
+ax.grid(linestyle="--", alpha=0.3)
+ax.legend(frameon=False, loc="lower left")
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, "Figure_06_Threshold_Optimization_Curve.pdf"), format="pdf", bbox_inches="tight")
+plt.close()
 
-# =============================================================================
-# DECISION THRESHOLD OPTIMIZATION
-# =============================================================================
+test_probabilities = neural_model.predict(X_test, verbose=0).ravel()
+test_predictions = (test_probabilities >= optimal_decision_threshold).astype(int)
 
-print_title("PHASE 7 - DECISION THRESHOLD OPTIMIZATION")
-
-# =============================================================================
-# PREDICT CLASS PROBABILITIES
-# =============================================================================
-
-print_section("Predicting Class Probabilities")
-
-# Generate probability scores using the trained ResNet-Attention model
-
-y_scores = nn_model.predict(
-    X_test,
-    verbose=0
-).ravel()
-
-print(f"{GREEN}✓ Probability prediction completed successfully.{END}")
-
-# =============================================================================
-# PRECISION-RECALL ANALYSIS
-# =============================================================================
-
-print_section("Precision-Recall Analysis")
-
-precision, recall, thresholds = precision_recall_curve(
-    y_test,
-    y_scores
-)
-
-# =============================================================================
-# OPTIMAL THRESHOLD SEARCH
-# =============================================================================
-
-print_section("Searching for the Optimal Classification Threshold")
-
-# Align arrays by discarding the last synthetic point from precision and recall
-precision_adj = precision[:-1]
-recall_adj = recall[:-1]
-
-# Compute denominator avoiding division by zero
-denominator = np.where(
-    (precision_adj + recall_adj) == 0,
-    1.0,
-    precision_adj + recall_adj
-)
-
-f1_scores = (
-    2 * precision_adj * recall_adj
-) / denominator
-
-best_index = np.argmax(f1_scores)
-
-optimal_threshold = thresholds[best_index]
-
-optimal_f1 = f1_scores[best_index]
-
-print(f"\nOptimal Threshold : {optimal_threshold:.4f}")
-print(f"Maximum F1-Score  : {optimal_f1:.4f}")
-
-# =============================================================================
-# FINAL CLASSIFICATION
-# =============================================================================
-
-print_section("Generating Final Predictions")
-
-# Convert probabilities into binary predictions
-
-y_pred_final = (
-    y_scores >= optimal_threshold
-).astype(int)
-
-print(f"{GREEN}✓ Final predictions generated successfully.{END}")
+log_progress("Phase 7 completed: Threshold optimization and test predictions evaluated.")

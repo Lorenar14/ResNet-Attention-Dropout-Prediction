@@ -1,143 +1,46 @@
-# =============================================================================
-# IMPORT LIBRARIES
-# =============================================================================
+PREPROCESSING SCALING AND SMOTE BALANCING
 
-import numpy as np
-import pandas as pd
+SELECTED_FEATURES = ["AGE", "STRATUM", "CURRENT_LEVEL", "PROGRAM_DURATION", "ACADEMIC_PROGRESS"]
+X_data = df[SELECTED_FEATURES].copy()
+y_data = df["target"].copy()
 
-from sklearn.model_selection import train_test_split
-from imblearn.over_sampling import SMOTE
+X_dev_set, X_test_raw, y_dev_set, y_test = train_test_split(X_data, y_data, test_size=0.20, stratify=y_data, random_state=RANDOM_SEED)
+X_train_raw, X_val_raw, y_train_raw, y_val = train_test_split(X_dev_set, y_dev_set, test_size=0.20, stratify=y_dev_set, random_state=RANDOM_SEED)
 
+training_medians = X_train_raw.median()
+X_train_raw = X_train_raw.fillna(training_medians)
+X_val_raw = X_val_raw.fillna(training_medians)
+X_test_raw = X_test_raw.fillna(training_medians)
 
-# =============================================================================
-#  DATA PREPROCESSING, SMOTE BALANCING AND TRAIN-TEST SPLIT
-# =============================================================================
+feature_scaler = RobustScaler()
+X_train_scaled = feature_scaler.fit_transform(X_train_raw)
+X_val = feature_scaler.transform(X_val_raw)
+X_test = feature_scaler.transform(X_test_raw)
 
-print_title("PHASE 5 - DATA PREPROCESSING")
+smote_sampler = SMOTE(sampling_strategy="auto", random_state=RANDOM_SEED, k_neighbors=5)
+X_train, y_train = smote_sampler.fit_resample(X_train_scaled, y_train_raw)
 
-# =============================================================================
-# FEATURE SELECTION
-# =============================================================================
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+axes[0].scatter(X_train_scaled[y_train_raw == 0, 0], X_train_scaled[y_train_raw == 0, 2], alpha=0.5, color=PALETTE_BLUE_DARK, label="No Dropout", s=15)
+axes[0].scatter(X_train_scaled[y_train_raw == 1, 0], X_train_scaled[y_train_raw == 1, 2], alpha=0.7, color=PALETTE_RED_DARK, label="Dropout (Minority)", s=25)
+axes[0].set_title("(a) Before SMOTE (Imbalanced)")
+axes[0].set_xlabel("Age (Scaled)")
+axes[0].set_ylabel("Academic Level (Scaled)")
+axes[0].legend(frameon=False)
+axes[0].spines["top"].set_visible(False)
+axes[0].spines["right"].set_visible(False)
 
-print_section("Feature Selection")
+axes[1].scatter(X_train[y_train == 0, 0], X_train[y_train == 0, 2], alpha=0.5, color=PALETTE_BLUE_DARK, label="No Dropout", s=15)
+axes[1].scatter(X_train[y_train == 1, 0], X_train[y_train == 1, 2], alpha=0.7, color=PALETTE_SLATE, label="Synthetic Dropout (SMOTE)", s=25)
+axes[1].set_title("(b) After SMOTE (Balanced)")
+axes[1].set_xlabel("Age (Scaled)")
+axes[1].set_ylabel("Academic Level (Scaled)")
+axes[1].legend(frameon=False)
+axes[1].spines["top"].set_visible(False)
+axes[1].spines["right"].set_visible(False)
 
-FEATURES = [
-    "EDAD",
-    "ESTRATO",
-    "NIVEL_ACTUAL",
-    "SEMESTRES_TOTAL_POR_CARRERA",
-    "AVANCE_NU"
-]
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, "Figure_04_SMOTE_Effect.pdf"), format="pdf", bbox_inches="tight")
+plt.close()
 
-X = df[FEATURES].copy()
-y = df["target"].copy()
-
-print("\nSelected Features:")
-print(FEATURES)
-
-print(f"\nTotal Records      : {len(X):,}")
-print(f"Number of Features : {X.shape[1]}")
-
-
-# =============================================================================
-# TRAIN-TEST SPLIT (BEFORE IMPUTATION TO PREVENT DATA LEAKAGE)
-# =============================================================================
-
-print_section("Train-Test Split")
-
-X_train_raw, X_test_raw, y_train_raw, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    stratify=y,
-    random_state=SEED
-)
-
-# =============================================================================
-# MISSING VALUE IMPUTATION (TRAIN-SET MEDIANS)
-# =============================================================================
-
-print_section("Missing Value Imputation")
-
-# Compute medians ONLY on the training set to prevent data leakage
-train_medians = X_train_raw.median()
-
-# Apply the training medians to both training and test sets
-X_train_raw = X_train_raw.fillna(train_medians)
-X_test_raw = X_test_raw.fillna(train_medians)
-
-print(f"{GREEN}✓ Missing values imputed using training set medians.{END}")
-
-# =============================================================================
-# ORIGINAL CLASS DISTRIBUTION
-# =============================================================================
-
-print_section("Original Class Distribution")
-
-# Print class distribution after the train-test split
-print("\nTraining Set (Before SMOTE)")
-print(y_train_raw.value_counts().sort_index())
-
-print("\nTesting Set")
-print(y_test.value_counts().sort_index())
-
-# =============================================================================
-# SMOTE OVERSAMPLING
-# =============================================================================
-
-print_section("SMOTE Oversampling")
-
-smote = SMOTE(
-    sampling_strategy="auto",
-    random_state=42,
-    k_neighbors=5
-)
-
-X_train_res, y_train_res = smote.fit_resample(
-    X_train_raw,
-    y_train_raw
-)
-
-print("\nTraining Set (After SMOTE)")
-print(y_train_res.value_counts().sort_index())
-
-# =============================================================================
-# ROBUST FEATURE SCALING
-# =============================================================================
-
-print_section("Robust Feature Scaling")
-
-scaler = RobustScaler()
-
-X_train = scaler.fit_transform(X_train_res)
-
-X_test = scaler.transform(X_test_raw)
-
-# =============================================================================
-# PREPROCESSING SUMMARY
-# =============================================================================
-
-print(f"\n{BOLD}{'='*90}")
-print("PREPROCESSING SUMMARY")
-print(f"{'='*90}{END}")
-
-print(f"Original Dataset                 : {X.shape}")
-print(f"Training Dataset (Before SMOTE)  : {X_train_raw.shape}")
-print(f"Testing Dataset                  : {X_test_raw.shape}")
-print(f"Balanced Training Dataset        : {X_train.shape}")
-
-print(f"\nTotal Students                  : {len(df):,}")
-print(f"Training Students               : {len(X_train_raw):,}")
-print(f"Testing Students                : {len(X_test_raw):,}")
-print(f"Balanced Training Samples       : {len(X_train_res):,}")
-
-print(
-    f"\nSynthetic Samples Generated     : "
-    f"{len(X_train_res)-len(X_train_raw):,}"
-)
-
-print(f"\n{GREEN}✓ Train-test split completed successfully.")
-print("✓ SMOTE applied only to the training dataset.")
-print("✓ Testing dataset remained completely unseen.")
-print("✓ RobustScaler applied successfully.")
-print(f"{END}")
+log_progress("Phase 4 completed: Robust scaling, SMOTE balancing, and effect visualization executed.")

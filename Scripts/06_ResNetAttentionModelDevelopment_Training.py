@@ -1,214 +1,51 @@
-# =============================================================================
-# IMPORT LIBRARIES
-# =============================================================================
+RESNET ATTENTION ARCHITECTURE TRAINING
 
-import numpy as np
-import tensorflow as tf
-
-from tensorflow.keras.layers import (
-    Input,
-    Dense,
-    BatchNormalization,
-    Dropout,
-    Add,
-    Multiply,
-    Activation
-)
-
-from tensorflow.keras.models import Model
-
-from tensorflow.keras.callbacks import (
-    EarlyStopping,
-    ReduceLROnPlateau,
-    ModelCheckpoint
-)
-
-from tensorflow.keras.optimizers import Adam
-
-# =============================================================================
-# RESNET-ATTENTION MODEL DEVELOPMENT AND TRAINING
-# =============================================================================
-
-print_title("PHASE 7 - RESNET-ATTENTION MODEL")
-
-# =============================================================================
-# RESNET-ATTENTION ARCHITECTURE
-# =============================================================================
-
-print_section("Building the ResNet-Attention Architecture")
-
-def build_resnet_optimized(input_dim):
-    """
-    ResNet-Attention architecture for university dropout prediction.
-    """
-
-    inputs = Input(shape=(input_dim,))
-
-    # -------------------------------------------------------------------------
-    # Initial Projection Layer
-    # -------------------------------------------------------------------------
-
-    x_init = layers.Dense(
-        128,
-        kernel_regularizer=regularizers.l2(0.001)
-    )(inputs)
-
+def construct_resnet_attention_model(input_dim):
+    inputs = Input(shape=(input_dim,), name="input_features")
+    x_init = layers.Dense(128, kernel_regularizer=regularizers.l2(0.001))(inputs)
     x_init = layers.BatchNormalization()(x_init)
     x_init = layers.Activation("swish")(x_init)
 
-    # -------------------------------------------------------------------------
-    # Residual Block
-    # -------------------------------------------------------------------------
-
-    x1 = layers.Dense(
-        128,
-        kernel_regularizer=regularizers.l2(0.001)
-    )(x_init)
-
+    x1 = layers.Dense(128, kernel_regularizer=regularizers.l2(0.001))(x_init)
     x1 = layers.BatchNormalization()(x1)
     x1 = layers.Activation("swish")(x1)
 
-    x2 = layers.Dense(
-        128,
-        kernel_regularizer=regularizers.l2(0.001)
-    )(x1)
-
+    x2 = layers.Dense(128, kernel_regularizer=regularizers.l2(0.001))(x1)
     x2 = layers.BatchNormalization()(x2)
 
-    residual = layers.Add()([x_init, x2])
+    residual_path = layers.Add()([x_init, x2])
+    residual_path = layers.Activation("swish")(residual_path)
 
-    residual = layers.Activation("swish")(residual)
+    attention_gate = layers.Dense(128, activation="sigmoid")(residual_path)
+    gated_features = layers.Multiply()([residual_path, attention_gate])
 
-    # -------------------------------------------------------------------------
-    # Attention Mechanism
-    # -------------------------------------------------------------------------
+    dense_out = layers.Dense(64, activation="swish")(gated_features)
+    dropout_out = layers.Dropout(0.50)(dense_out)
+    predictions = layers.Dense(1, activation="sigmoid")(dropout_out)
 
-    attention = layers.Dense(
-        128,
-        activation="sigmoid"
-    )(residual)
-
-    x = layers.Multiply()([residual, attention])
-
-    # -------------------------------------------------------------------------
-    # Classification Head
-    # -------------------------------------------------------------------------
-
-    x = layers.Dense(
-        64,
-        activation="swish"
-    )(x)
-
-    x = layers.Dropout(0.50)(x)
-
-    outputs = layers.Dense(
-        1,
-        activation="sigmoid"
-    )(x)
-
-    model = Model(
-        inputs=inputs,
-        outputs=outputs
-    )
-
-    # -------------------------------------------------------------------------
-    # Model Compilation
-    # -------------------------------------------------------------------------
-
-    optimizer = tf.keras.optimizers.Adam(
-        learning_rate=0.0001
-    )
-
+    model = Model(inputs=inputs, outputs=predictions, name="ResNet_Attention")
     model.compile(
-
-        optimizer=optimizer,
-
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
         loss="binary_crossentropy",
-
-        metrics=[
-            "accuracy",
-            tf.keras.metrics.AUC(name="auc"),
-            tf.keras.metrics.Recall(name="recall")
-        ]
+        metrics=[tf.keras.metrics.BinaryAccuracy(name="accuracy"), tf.keras.metrics.AUC(name="auc")]
     )
-
     return model
 
+tf.keras.utils.set_random_seed(RANDOM_SEED)
+neural_model = construct_resnet_attention_model(input_dim=X_train.shape[1])
 
-# =============================================================================
-#  MODEL INITIALIZATION
-# =============================================================================
+callback_early_stop = EarlyStopping(monitor="val_loss", patience=15, mode="min", restore_best_weights=True, verbose=1)
+callback_reduce_lr = ReduceLROnPlateau(monitor="val_loss", factor=0.50, patience=5, mode="min", min_lr=1e-5, verbose=1)
 
-print_section("Initializing the Deep Learning Model")
-
-tf.random.set_seed(SEED)
-
-nn_model = build_resnet_optimized(
-    X_train.shape[1]
-)
-
-print(f"{GREEN}✓ ResNet-Attention model created successfully.{END}")
-
-
-# =============================================================================
-#  CALLBACK CONFIGURATION
-# =============================================================================
-
-print_section("Configuring Training Callbacks")
-
-early_stopping = EarlyStopping(
-
-    monitor="val_loss",
-
-    patience=15,
-
-    restore_best_weights=True
-
-)
-
-reduce_lr = ReduceLROnPlateau(
-
-    monitor="val_loss",
-
-    factor=0.50,
-
-    patience=5,
-
-    min_lr=1e-5,
-
-    verbose=1
-
-)
-
-print(f"{GREEN}✓ EarlyStopping configured.{END}")
-print(f"{GREEN}✓ ReduceLROnPlateau configured.{END}")
-
-
-# =============================================================================
-# MODEL TRAINING
-# =============================================================================
-
-print_section("Training the ResNet-Attention Model")
-
-history = nn_model.fit(
-
-    X_train,
-
-    y_train_res,
-
-    validation_data=(X_test, y_test),
-
+print("Starting ResNet-Attention model training...")
+history = neural_model.fit(
+    X_train, y_train,
+    validation_data=(X_val, y_val),
     epochs=50,
-
     batch_size=32,
-
-    callbacks=[
-        early_stopping,
-        reduce_lr
-    ],
-
+    shuffle=True,
+    callbacks=[callback_early_stop, callback_reduce_lr],
     verbose=1
-
 )
 
-print(f"\n{GREEN}✓ Model training completed successfully.{END}")
+log_progress("Phase 5 completed: ResNet-Attention neural network successfully trained.")

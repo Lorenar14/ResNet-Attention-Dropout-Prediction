@@ -1,0 +1,165 @@
+from pathlib import Path
+from datetime import datetime, timezone
+import json
+import warnings
+
+import joblib
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+BASE_DIR = Path("/content")
+RESULTS_DIR = BASE_DIR / "Results"
+MODEL_DIR = RESULTS_DIR / "Models"
+OUTPUT_DIR = RESULTS_DIR / "Phase12_Active_Student_Predictions"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+DATA_PATH = RESULTS_DIR / "Modeling_Dataset.csv"
+MODEL_PATH = MODEL_DIR / "ResNet_Attention.keras"
+
+NUMERIC_IMPUTER_PATH = RESULTS_DIR / "Numeric_Imputer.joblib"
+STRATUM_IMPUTER_PATH = RESULTS_DIR / "Stratum_Imputer.joblib"
+SCALER_PATH = RESULTS_DIR / "RobustScaler.joblib"
+FEATURES_PATH = RESULTS_DIR / "Selected_Features.joblib"
+
+PREDICTIONS_PATH = OUTPUT_DIR / "Phase12_Active_Student_Predictions.csv"
+RISK_SUMMARY_PATH = OUTPUT_DIR / "Phase12_Risk_Level_Summary.csv"
+CONFIG_PATH = OUTPUT_DIR / "Phase12_Configuration.json"
+
+DECISION_THRESHOLD = 0.370735
+LOW_RISK_LIMIT = 0.30
+HIGH_RISK_LIMIT = 0.60
+
+EXPECTED_FEATURES = [
+    "AGE",
+    "STRATUM",
+    "CURRENT_LEVEL",
+    "PROGRAM_DURATION",
+    "ACADEMIC_PROGRESS"
+]
+
+NUMERIC_FEATURES = [
+    "AGE",
+    "CURRENT_LEVEL",
+    "PROGRAM_DURATION",
+    "ACADEMIC_PROGRESS"
+]
+
+RISK_ORDER = ["LOW", "MEDIUM", "HIGH"]
+
+required_paths = [
+    DATA_PATH,
+    MODEL_PATH,
+    NUMERIC_IMPUTER_PATH,
+    STRATUM_IMPUTER_PATH,
+    SCALER_PATH,
+    FEATURES_PATH
+]
+
+missing_paths = [str(path) for path in required_paths if not path.exists()]
+
+if missing_paths:
+    raise FileNotFoundError(
+        "Required files were not found:\n" + "\n".join(missing_paths)
+    )
+
+print("All required artifacts were found.")
+
+df = pd.read_csv(DATA_PATH, sep=";")
+
+model = tf.keras.models.load_model(
+    MODEL_PATH,
+    compile=False
+)
+
+numeric_imputer = joblib.load(NUMERIC_IMPUTER_PATH)
+stratum_imputer = joblib.load(STRATUM_IMPUTER_PATH)
+scaler = joblib.load(SCALER_PATH)
+selected_features = joblib.load(FEATURES_PATH)
+
+if isinstance(selected_features, np.ndarray):
+    selected_features = selected_features.tolist()
+
+selected_features = list(selected_features)
+
+if selected_features != EXPECTED_FEATURES:
+    raise ValueError(
+        "The predictor order differs from the Phase 4 configuration. "
+        f"Expected: {EXPECTED_FEATURES}; loaded: {selected_features}"
+    )
+
+print(f"Dataset records: {len(df):,}")
+print(f"Predictors: {selected_features}")
+
+# Filter for ACTIVE students
+active_df = df[df["ACADEMIC_STATUS"].str.upper() == "ACTIVE"].copy()
+print(f"Active students: {len(active_df):,}")
+
+if active_df.empty:
+    raise ValueError("No active students found in the modeling dataset.")
+
+# Preprocess predictions in sequential order
+X_active_numeric = pd.DataFrame(
+    numeric_imputer.transform(active_df[NUMERIC_FEATURES]),
+    columns=NUMERIC_FEATURES,
+    index=active_df.index
+)
+
+X_active_stratum = stratum_imputer.transform(active_df[["STRATUM"]])
+
+X_active_numeric_scaled = pd.DataFrame(
+    scaler.transform(X_active_numeric),
+    columns=NUMERIC_FEATURES,
+    index=active_df.index
+)
+
+# Assemble
+X_active_prepared = X_active_numeric_scaled.copy()
+X_active_prepared["STRATUM"] = X_active_stratum.reshape(-1)
+X_active_prepared = X_active_prepared[EXPECTED_FEATURES]
+
+X_active = X_active_prepared.to_numpy(dtype=np.float32)
+
+# Predict probabilities
+probabilities = model.predict(X_active, verbose=0).reshape(-1)
+
+active_df["DROPOUT_PROBABILITY"] = probabilities
+active_df["PREDICTED_DROPOUT"] = (probabilities >= DECISION_THRESHOLD).astype(int)
+active_df["DECISION_THRESHOLD"] = DECISION_THRESHOLD
+active_df["MODEL"] = "ResNet-Attention"
+
+# Assign Risk Levels based on threshold boundaries
+active_df["RISK_LEVEL"] = np.select(
+    [
+        probabilities < LOW_RISK_LIMIT,
+        probabilities < HIGH_RISK_LIMIT
+    ],
+    ["LOW", "MEDIUM"],
+    default="HIGH"
+)
+
+# Export active predictions
+active_df.to_csv(PREDICTIONS_PATH, index=False, encoding="utf-8-sig")
+
+# Risk summary
+risk_summary = active_df["RISK_LEVEL"].value_counts().reindex(RISK_ORDER, fill_value=0).reset_index()
+risk_summary.columns = ["RISK_LEVEL", "COUNT"]
+risk_summary.to_csv(RISK_SUMMARY_PATH, index=False, encoding="utf-8-sig")
+
+# Config output
+config_data = {
+    "model_name": "ResNet-Attention",
+    "active_student_count": len(active_df),
+    "decision_threshold": DECISION_THRESHOLD,
+    "low_risk_limit": LOW_RISK_LIMIT,
+    "high_risk_limit": HIGH_RISK_LIMIT,
+    "timestamp": datetime.now(timezone.utc).isoformat()
+}
+
+with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    json.dump(config_data, f, indent=4)
+
+print("Phase 12 execution completed successfully.")

@@ -1,0 +1,461 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.metrics import (
+    roc_curve,
+    roc_auc_score,
+    precision_recall_curve,
+    average_precision_score,
+)
+
+# 11.1. Configure output paths
+
+PHASE11_DIR = OUTPUT_DIR / "Phase11_ROC_PR_Analysis"
+PHASE11_DIR.mkdir(parents=True, exist_ok=True)
+
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+ROC_DATA_PATH = PHASE11_DIR / "Phase11_ROC_Curve_Data.csv"
+PR_DATA_PATH = PHASE11_DIR / "Phase11_PR_Curve_Data.csv"
+METRICS_PATH = PHASE11_DIR / "Phase11_Performance_Metrics.csv"
+
+ROC_FIGURE_PNG = FIGURE_DIR / "Figure_14_ROC_Curve.png"
+ROC_FIGURE_PDF = FIGURE_DIR / "Figure_14_ROC_Curve.pdf"
+
+PR_FIGURE_PNG = FIGURE_DIR / "Figure_15_Precision_Recall_Curve.png"
+PR_FIGURE_PDF = FIGURE_DIR / "Figure_15_Precision_Recall_Curve.pdf"
+
+COMBINED_FIGURE_PNG = FIGURE_DIR / "Figure_16_ROC_PR_Combined.png"
+COMBINED_FIGURE_PDF = FIGURE_DIR / "Figure_16_ROC_PR_Combined.pdf"
+
+log_progress(
+    "Starting Phase 11: ROC and Precision-Recall analysis."
+)
+
+# 11.2. Validate required objects
+
+required_objects = [
+    "neural_model",
+    "X_test",
+    "y_test",
+    "PALETTE_BLUE_DARK",
+    "PALETTE_RED_DARK",
+]
+
+missing_objects = [
+    name for name in required_objects
+    if name not in globals()
+]
+
+if missing_objects:
+    raise RuntimeError(
+        "Required objects are missing. Run the previous phases first: "
+        f"{missing_objects}"
+    )
+
+X_test_array = np.asarray(X_test, dtype=np.float32)
+y_test_array = np.asarray(y_test).reshape(-1)
+
+if X_test_array.ndim != 2:
+    raise ValueError(
+        "X_test must be a two-dimensional feature matrix."
+    )
+
+if len(X_test_array) != len(y_test_array):
+    raise ValueError(
+        "X_test and y_test have different numbers of records."
+    )
+
+if len(y_test_array) == 0:
+    raise ValueError("The test dataset is empty.")
+
+if not np.isfinite(X_test_array).all():
+    raise ValueError(
+        "X_test contains missing or infinite values."
+    )
+
+if pd.isna(y_test_array).any():
+    raise ValueError(
+        "y_test contains missing target values."
+    )
+
+if not np.isin(y_test_array, [0, 1]).all():
+    raise ValueError(
+        "The target must contain only the binary values 0 and 1."
+    )
+
+if set(np.unique(y_test_array)) != {0, 1}:
+    raise ValueError(
+        "The test target must contain both binary classes: 0 and 1."
+    )
+
+y_test_array = y_test_array.astype(int)
+
+# 11.3. Generate predictions using the trained model
+
+test_probabilities = np.asarray(
+    neural_model.predict(
+        X_test_array,
+        verbose=0,
+    )
+).reshape(-1)
+
+if len(test_probabilities) != len(y_test_array):
+    raise ValueError(
+        "The number of predicted probabilities does not match "
+        "the number of test records."
+    )
+
+if (
+    not np.isfinite(test_probabilities).all()
+    or (test_probabilities < 0).any()
+    or (test_probabilities > 1).any()
+):
+    raise ValueError(
+        "Predicted probabilities must be finite and between 0 and 1."
+    )
+
+total_count = len(y_test_array)
+positive_count = int(np.sum(y_test_array == 1))
+negative_count = int(np.sum(y_test_array == 0))
+positive_prevalence = float(np.mean(y_test_array == 1))
+
+print("\nTest dataset summary:")
+print(f"Total records: {total_count:,}")
+print(f"Actual positive cases: {positive_count:,}")
+print(f"Actual negative cases: {negative_count:,}")
+print(f"Positive-class prevalence: {positive_prevalence:.4f}")
+
+# 11.4. Calculate and export the ROC curve
+
+false_positive_rate, true_positive_rate, roc_thresholds = roc_curve(
+    y_test_array,
+    test_probabilities,
+    pos_label=1,
+)
+
+roc_auc = roc_auc_score(
+    y_test_array,
+    test_probabilities,
+)
+
+roc_df = pd.DataFrame({
+    "FALSE_POSITIVE_RATE": false_positive_rate,
+    "TRUE_POSITIVE_RATE": true_positive_rate,
+    "THRESHOLD": roc_thresholds,
+})
+
+roc_df.to_csv(
+    ROC_DATA_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.8f",
+)
+
+print(f"\nROC-AUC: {roc_auc:.4f}")
+
+# 11.5. Calculate and export the Precision-Recall curve
+
+precision_values, recall_values, pr_thresholds = (
+    precision_recall_curve(
+        y_test_array,
+        test_probabilities,
+        pos_label=1,
+    )
+)
+
+average_precision = average_precision_score(
+    y_test_array,
+    test_probabilities,
+)
+
+# precision and recall contain one more value than thresholds.
+pr_thresholds_aligned = np.append(
+    pr_thresholds,
+    np.nan,
+)
+
+pr_df = pd.DataFrame({
+    "RECALL": recall_values,
+    "PRECISION": precision_values,
+    "THRESHOLD": pr_thresholds_aligned,
+})
+
+pr_df.to_csv(
+    PR_DATA_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.8f",
+)
+
+print(f"Average Precision: {average_precision:.4f}")
+
+# 11.6. Export performance metrics
+
+metrics_df = pd.DataFrame([{
+    "MODEL": "ResNet-Attention",
+    "TEST_RECORDS": total_count,
+    "ACTUAL_POSITIVE_CASES": positive_count,
+    "ACTUAL_NEGATIVE_CASES": negative_count,
+    "POSITIVE_CLASS_PREVALENCE": positive_prevalence,
+    "ROC_AUC": float(roc_auc),
+    "AVERAGE_PRECISION": float(average_precision),
+}])
+
+metrics_df.to_csv(
+    METRICS_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.8f",
+)
+
+print("\nROC and Precision-Recall metrics:")
+print(metrics_df.round(4).to_string(index=False))
+
+# 11.7. Configure figure style
+
+plt.rcParams["font.family"] = "DejaVu Serif"
+plt.rcParams["font.size"] = 10
+
+# 11.8. Generate the ROC curve
+
+fig, ax = plt.subplots(figsize=(7, 5.5))
+
+ax.plot(
+    false_positive_rate,
+    true_positive_rate,
+    color=PALETTE_BLUE_DARK,
+    linewidth=2,
+    label=f"ResNet-Attention (AUC = {roc_auc:.4f})",
+)
+
+ax.plot(
+    [0, 1],
+    [0, 1],
+    color="black",
+    linestyle="--",
+    linewidth=1,
+    label="Random classifier",
+)
+
+ax.set_xlabel("False Positive Rate")
+ax.set_ylabel("True Positive Rate")
+
+ax.set_title(
+    "ROC Curve: ResNet-Attention",
+    pad=12,
+    fontweight="bold",
+)
+
+ax.set_xlim(0, 1)
+ax.set_ylim(0, 1.02)
+
+ax.grid(
+    linestyle="--",
+    alpha=0.25,
+)
+
+ax.set_axisbelow(True)
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+ax.legend(
+    loc="lower right",
+    frameon=False,
+)
+
+fig.tight_layout()
+
+fig.savefig(
+    ROC_FIGURE_PNG,
+    dpi=300,
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    ROC_FIGURE_PDF,
+    format="pdf",
+    bbox_inches="tight",
+)
+
+plt.close(fig)
+
+# 11.9. Generate the Precision-Recall curve
+
+fig, ax = plt.subplots(figsize=(7, 5.5))
+
+ax.plot(
+    recall_values,
+    precision_values,
+    color=PALETTE_BLUE_DARK,
+    linewidth=2,
+    label=f"ResNet-Attention (AP = {average_precision:.4f})",
+)
+
+ax.axhline(
+    positive_prevalence,
+    color=PALETTE_RED_DARK,
+    linestyle="--",
+    linewidth=1.5,
+    label=f"Positive prevalence = {positive_prevalence:.4f}",
+)
+
+ax.set_xlabel("Recall")
+ax.set_ylabel("Precision")
+
+ax.set_title(
+    "Precision-Recall Curve: ResNet-Attention",
+    pad=12,
+    fontweight="bold",
+)
+
+ax.set_xlim(0, 1)
+ax.set_ylim(0, 1.02)
+
+ax.grid(
+    linestyle="--",
+    alpha=0.25,
+)
+
+ax.set_axisbelow(True)
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+ax.legend(
+    loc="best",
+    frameon=False,
+)
+
+fig.tight_layout()
+
+fig.savefig(
+    PR_FIGURE_PNG,
+    dpi=300,
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    PR_FIGURE_PDF,
+    format="pdf",
+    bbox_inches="tight",
+)
+
+plt.close(fig)
+
+# 11.10. Generate the combined ROC and Precision-Recall figure
+
+fig, axes = plt.subplots(
+    nrows=1,
+    ncols=2,
+    figsize=(12, 5),
+)
+
+axes[0].plot(
+    false_positive_rate,
+    true_positive_rate,
+    color=PALETTE_BLUE_DARK,
+    linewidth=2,
+    label=f"AUC = {roc_auc:.4f}",
+)
+
+axes[0].plot(
+    [0, 1],
+    [0, 1],
+    color="black",
+    linestyle="--",
+    linewidth=1,
+    label="Random classifier",
+)
+
+axes[0].set_xlabel("False Positive Rate")
+axes[0].set_ylabel("True Positive Rate")
+axes[0].set_title("ROC Curve", fontweight="bold")
+axes[0].set_xlim(0, 1)
+axes[0].set_ylim(0, 1.02)
+axes[0].grid(linestyle="--", alpha=0.25)
+axes[0].set_axisbelow(True)
+axes[0].spines["top"].set_visible(False)
+axes[0].spines["right"].set_visible(False)
+axes[0].legend(loc="lower right", frameon=False)
+
+axes[1].plot(
+    recall_values,
+    precision_values,
+    color=PALETTE_BLUE_DARK,
+    linewidth=2,
+    label=f"AP = {average_precision:.4f}",
+)
+
+axes[1].axhline(
+    positive_prevalence,
+    color=PALETTE_RED_DARK,
+    linestyle="--",
+    linewidth=1.5,
+    label=f"Prevalence = {positive_prevalence:.4f}",
+)
+
+axes[1].set_xlabel("Recall")
+axes[1].set_ylabel("Precision")
+axes[1].set_title("Precision-Recall Curve", fontweight="bold")
+axes[1].set_xlim(0, 1)
+axes[1].set_ylim(0, 1.02)
+axes[1].grid(linestyle="--", alpha=0.25)
+axes[1].set_axisbelow(True)
+axes[1].spines["top"].set_visible(False)
+axes[1].spines["right"].set_visible(False)
+axes[1].legend(loc="best", frameon=False)
+
+fig.tight_layout()
+
+fig.savefig(
+    COMBINED_FIGURE_PNG,
+    dpi=300,
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    COMBINED_FIGURE_PDF,
+    format="pdf",
+    bbox_inches="tight",
+)
+
+plt.close(fig)
+
+# 11.11. Validate generated files
+
+output_paths = [
+    ROC_DATA_PATH,
+    PR_DATA_PATH,
+    METRICS_PATH,
+    ROC_FIGURE_PNG,
+    ROC_FIGURE_PDF,
+    PR_FIGURE_PNG,
+    PR_FIGURE_PDF,
+    COMBINED_FIGURE_PNG,
+    COMBINED_FIGURE_PDF,
+]
+
+missing_files = [
+    str(path)
+    for path in output_paths
+    if not path.exists() or path.stat().st_size == 0
+]
+
+if missing_files:
+    raise RuntimeError(
+        "Some Phase 11 output files were not generated correctly: "
+        f"{missing_files}"
+    )
+
+print("\nGenerated files:")
+
+for output_path in output_paths:
+    print(f"- {output_path}")
+
+log_progress(
+    "Phase 11 completed: ROC and Precision-Recall curves, "
+    "performance metrics, and figures exported."
+)
+
+print("\nPhase 11 completed successfully.")

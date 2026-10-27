@@ -1,0 +1,586 @@
+# PHASE 10: FEATURE IMPORTANCE AND MODEL INTERPRETABILITY
+
+import json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.metrics import (
+    roc_auc_score,
+    confusion_matrix,
+    accuracy_score,
+    balanced_accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    matthews_corrcoef,
+    average_precision_score,
+)
+
+
+# 10.1. Configure output paths
+
+PHASE10_DIR = OUTPUT_DIR / "Phase10_Interpretability"
+PHASE10_DIR.mkdir(parents=True, exist_ok=True)
+
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+IMPORTANCE_PATH = (
+    PHASE10_DIR / "Phase10_Feature_Importance.csv"
+)
+
+IMPORTANCE_FIGURE_PDF = (
+    FIGURE_DIR / "Figure_13_Feature_Importance.pdf"
+)
+
+IMPORTANCE_FIGURE_PNG = (
+    FIGURE_DIR / "Figure_13_Feature_Importance.png"
+)
+
+PREDICTION_PROFILE_PATH = (
+    PHASE10_DIR / "Phase10_Prediction_Profile.csv"
+)
+
+ERROR_ANALYSIS_PATH = (
+    PHASE10_DIR / "Phase10_Classification_Errors.csv"
+)
+
+ERROR_SUMMARY_PATH = (
+    PHASE10_DIR / "Phase10_Classification_Error_Summary.csv"
+)
+
+METRICS_PATH = (
+    PHASE10_DIR / "Phase10_Test_Metrics.csv"
+)
+
+CONFIG_PATH = (
+    PHASE10_DIR / "Phase10_Interpretability_Config.json"
+)
+
+log_progress(
+    "Starting Phase 10: feature importance and model interpretability."
+)
+
+
+# 10.2. Validate the model, features, and test data
+
+required_objects = [
+    "neural_model",
+    "X_test",
+    "y_test",
+    "SELECTED_FEATURES",
+    "PALETTE_BLUE_DARK",
+    "PALETTE_RED_DARK",
+    "RANDOM_SEED",
+]
+
+missing_objects = [
+    name
+    for name in required_objects
+    if name not in globals()
+]
+
+if missing_objects:
+    raise RuntimeError(
+        f"Required objects are missing: {missing_objects}. "
+        "Execute the preceding phases before running Phase 10."
+    )
+
+EXPECTED_FEATURES = [
+    "AGE",
+    "STRATUM",
+    "CURRENT_LEVEL",
+    "PROGRAM_DURATION",
+    "ACADEMIC_PROGRESS",
+]
+
+feature_names = list(SELECTED_FEATURES)
+
+if feature_names != EXPECTED_FEATURES:
+    raise ValueError(
+        "The selected features do not match the established model "
+        f"configuration. Expected: {EXPECTED_FEATURES}; "
+        f"received: {feature_names}."
+    )
+
+X_test_array = np.asarray(X_test, dtype=np.float32)
+y_test_array = np.asarray(y_test).reshape(-1).astype(int)
+
+if X_test_array.ndim != 2:
+    raise ValueError(
+        "X_test must be a two-dimensional feature matrix."
+    )
+
+if X_test_array.shape[1] != len(feature_names):
+    raise ValueError(
+        "The number of test predictors does not match "
+        "the selected feature list."
+    )
+
+if len(X_test_array) != len(y_test_array):
+    raise ValueError(
+        "The test feature matrix and target have different lengths."
+    )
+
+if not np.isfinite(X_test_array).all():
+    raise ValueError(
+        "X_test contains missing or infinite values."
+    )
+
+if set(np.unique(y_test_array)) != {0, 1}:
+    raise ValueError(
+        "The test target must contain both binary classes: 0 and 1."
+    )
+
+if len(y_test_array) != 7701:
+    print(
+        "Warning: the independent test sample count differs from "
+        "the previously reported 7,701 records. Verify the split."
+    )
+
+print(f"Selected features: {feature_names}")
+print(f"Independent test records: {len(y_test_array):,}")
+
+
+# 10.3. Establish the fixed decision threshold
+
+DECISION_THRESHOLD = 0.50
+
+THRESHOLD_SOURCE = (
+    "Fixed threshold established for the Phase 8 and Phase 9 evaluations"
+)
+
+print(f"Decision threshold: {DECISION_THRESHOLD:.2f}")
+
+
+# 10.4. Generate ResNet-Attention predictions
+
+test_probabilities = neural_model.predict(
+    X_test_array,
+    verbose=0,
+).reshape(-1)
+
+if len(test_probabilities) != len(y_test_array):
+    raise ValueError(
+        "The number of predicted probabilities does not match "
+        "the test sample count."
+    )
+
+if (
+    not np.isfinite(test_probabilities).all()
+    or (test_probabilities < 0).any()
+    or (test_probabilities > 1).any()
+):
+    raise ValueError(
+        "The model generated invalid probabilities."
+    )
+
+predicted_labels = (
+    test_probabilities >= DECISION_THRESHOLD
+).astype(int)
+
+reference_auc = roc_auc_score(
+    y_test_array,
+    test_probabilities,
+)
+
+print(f"Test ROC-AUC: {reference_auc:.4f}")
+
+
+# 10.5. Calculate permutation feature importance
+
+# Importance is measured as the decrease in ROC-AUC after
+# randomly permuting one predictor.
+#
+# The trained model remains unchanged.
+# Positive values indicate reduced discrimination after permutation.
+# Negative values indicate that permutation improved ROC-AUC.
+# Importance does not establish causality.
+
+N_REPEATS = 10
+
+rng = np.random.default_rng(RANDOM_SEED)
+
+importance_records = []
+
+for feature_index, feature_name in enumerate(feature_names):
+
+    permuted_auc_scores = []
+
+    for repeat in range(N_REPEATS):
+
+        X_permuted = X_test_array.copy()
+
+        X_permuted[:, feature_index] = rng.permutation(
+            X_permuted[:, feature_index]
+        )
+
+        permuted_probabilities = neural_model.predict(
+            X_permuted,
+            verbose=0,
+        ).reshape(-1)
+
+        permuted_auc = roc_auc_score(
+            y_test_array,
+            permuted_probabilities,
+        )
+
+        permuted_auc_scores.append(permuted_auc)
+
+    importance_values = (
+        reference_auc - np.asarray(permuted_auc_scores)
+    )
+
+    importance_records.append({
+        "FEATURE": feature_name,
+        "IMPORTANCE_MEAN": float(
+            np.mean(importance_values)
+        ),
+        "IMPORTANCE_STD": float(
+            np.std(importance_values, ddof=1)
+        ),
+        "BASELINE_ROC_AUC": float(reference_auc),
+        "PERMUTED_ROC_AUC_MEAN": float(
+            np.mean(permuted_auc_scores)
+        ),
+        "N_REPEATS": N_REPEATS,
+    })
+
+importance_df = pd.DataFrame(importance_records)
+
+importance_df = importance_df.sort_values(
+    "IMPORTANCE_MEAN",
+    ascending=False,
+).reset_index(drop=True)
+
+importance_df.to_csv(
+    IMPORTANCE_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.6f",
+)
+
+print("\nPermutation Feature Importance")
+print(importance_df.round(5).to_string(index=False))
+
+
+# 10.6. Generate the feature importance figure
+
+plot_df = importance_df.sort_values(
+    "IMPORTANCE_MEAN",
+    ascending=True,
+)
+
+most_important_feature = importance_df.iloc[0]["FEATURE"]
+
+bar_colors = [
+    PALETTE_RED_DARK
+    if feature == most_important_feature
+    else PALETTE_BLUE_DARK
+    for feature in plot_df["FEATURE"]
+]
+
+fig, ax = plt.subplots(figsize=(8, 5.2))
+
+ax.barh(
+    plot_df["FEATURE"],
+    plot_df["IMPORTANCE_MEAN"],
+    xerr=plot_df["IMPORTANCE_STD"],
+    color=bar_colors,
+    capsize=3,
+    error_kw={
+        "elinewidth": 1,
+        "capthick": 1,
+    },
+)
+
+ax.axvline(
+    0,
+    color="black",
+    linewidth=0.8,
+)
+
+ax.set_xlabel(
+    "Decrease in ROC-AUC After Permutation"
+)
+
+ax.set_ylabel("Predictor")
+
+ax.set_title(
+    "Permutation Feature Importance: ResNet-Attention",
+    pad=12,
+    fontweight="bold",
+)
+
+ax.grid(
+    axis="x",
+    linestyle="--",
+    alpha=0.25,
+)
+
+ax.set_axisbelow(True)
+
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+fig.tight_layout()
+
+fig.savefig(
+    IMPORTANCE_FIGURE_PDF,
+    format="pdf",
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    IMPORTANCE_FIGURE_PNG,
+    format="png",
+    dpi=300,
+    bbox_inches="tight",
+)
+
+plt.close(fig)
+
+print("\nFeature importance figure saved.")
+
+
+# 10.7. Generate the prediction probability profile
+
+prediction_profile = pd.DataFrame({
+    "TRUE_LABEL": y_test_array,
+    "PREDICTED_LABEL": predicted_labels,
+    "DROPOUT_PROBABILITY": test_probabilities,
+    "DECISION_THRESHOLD": DECISION_THRESHOLD,
+})
+
+prediction_summary = (
+    prediction_profile
+    .groupby(
+        ["TRUE_LABEL", "PREDICTED_LABEL"],
+        observed=True,
+    )
+    .agg(
+        NUMBER_OF_RECORDS=(
+            "DROPOUT_PROBABILITY",
+            "size",
+        ),
+        MEAN_PREDICTED_PROBABILITY=(
+            "DROPOUT_PROBABILITY",
+            "mean",
+        ),
+        MEDIAN_PREDICTED_PROBABILITY=(
+            "DROPOUT_PROBABILITY",
+            "median",
+        ),
+        MIN_PREDICTED_PROBABILITY=(
+            "DROPOUT_PROBABILITY",
+            "min",
+        ),
+        MAX_PREDICTED_PROBABILITY=(
+            "DROPOUT_PROBABILITY",
+            "max",
+        ),
+    )
+    .reset_index()
+)
+
+prediction_summary.to_csv(
+    PREDICTION_PROFILE_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.6f",
+)
+
+print("\nPrediction Probability Profile")
+print(
+    prediction_summary.round(4).to_string(index=False)
+)
+
+
+# 10.8. Analyze classification errors
+
+error_categories = {
+    (0, 0): "True Negative",
+    (0, 1): "False Positive",
+    (1, 0): "False Negative",
+    (1, 1): "True Positive",
+}
+
+error_analysis = prediction_profile.copy()
+
+error_analysis["CLASSIFICATION_RESULT"] = [
+    error_categories[(int(actual), int(predicted))]
+    for actual, predicted in zip(
+        error_analysis["TRUE_LABEL"],
+        error_analysis["PREDICTED_LABEL"],
+    )
+]
+
+error_analysis.to_csv(
+    ERROR_ANALYSIS_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.6f",
+)
+
+error_counts = (
+    error_analysis["CLASSIFICATION_RESULT"]
+    .value_counts()
+    .reindex(
+        [
+            "True Negative",
+            "False Positive",
+            "False Negative",
+            "True Positive",
+        ],
+        fill_value=0,
+    )
+)
+
+error_summary_df = error_counts.rename_axis(
+    "CLASSIFICATION_RESULT"
+).reset_index(
+    name="NUMBER_OF_RECORDS"
+)
+
+error_summary_df.to_csv(
+    ERROR_SUMMARY_PATH,
+    index=False,
+    encoding="utf-8",
+)
+
+print("\nClassification Error Summary")
+print(error_counts.to_string())
+
+
+# 10.9. Calculate test metrics at the fixed threshold
+
+tn, fp, fn, tp = confusion_matrix(
+    y_test_array,
+    predicted_labels,
+    labels=[0, 1],
+).ravel()
+
+specificity = (
+    tn / (tn + fp)
+    if (tn + fp) > 0
+    else 0.0
+)
+
+test_metrics = pd.DataFrame([{
+    "MODEL": "ResNet-Attention",
+    "DECISION_THRESHOLD": DECISION_THRESHOLD,
+    "THRESHOLD_SOURCE": THRESHOLD_SOURCE,
+    "TEST_SAMPLES": len(y_test_array),
+    "ACCURACY": accuracy_score(
+        y_test_array,
+        predicted_labels,
+    ),
+    "BALANCED_ACCURACY": balanced_accuracy_score(
+        y_test_array,
+        predicted_labels,
+    ),
+    "PRECISION": precision_score(
+        y_test_array,
+        predicted_labels,
+        zero_division=0,
+    ),
+    "RECALL": recall_score(
+        y_test_array,
+        predicted_labels,
+        zero_division=0,
+    ),
+    "SPECIFICITY": specificity,
+    "F1_SCORE": f1_score(
+        y_test_array,
+        predicted_labels,
+        zero_division=0,
+    ),
+    "ROC_AUC": reference_auc,
+    "AVERAGE_PRECISION": average_precision_score(
+        y_test_array,
+        test_probabilities,
+    ),
+    "MCC": matthews_corrcoef(
+        y_test_array,
+        predicted_labels,
+    ),
+    "TRUE_NEGATIVES": int(tn),
+    "FALSE_POSITIVES": int(fp),
+    "FALSE_NEGATIVES": int(fn),
+    "TRUE_POSITIVES": int(tp),
+}])
+
+test_metrics.to_csv(
+    METRICS_PATH,
+    index=False,
+    encoding="utf-8",
+    float_format="%.6f",
+)
+
+print("\nResNet-Attention Test Metrics")
+print(test_metrics.round(4).to_string(index=False))
+
+
+# 10.10. Save configuration and validate outputs
+
+phase10_config = {
+    "phase": 10,
+    "purpose": "Feature importance and model interpretability",
+    "model": "ResNet-Attention",
+    "features": feature_names,
+    "test_samples": int(len(y_test_array)),
+    "decision_threshold": DECISION_THRESHOLD,
+    "threshold_source": THRESHOLD_SOURCE,
+    "permutation_repeats": N_REPEATS,
+    "importance_metric": (
+        "Mean decrease in ROC-AUC after feature permutation"
+    ),
+    "test_set_used_for_posthoc_importance": True,
+    "smote_applied_to_test": False,
+    "target_interpretation": (
+        "Operational dropout label derived from administrative rules; "
+        "not independently verified dropout."
+    ),
+}
+
+with open(
+    CONFIG_PATH,
+    "w",
+    encoding="utf-8",
+) as config_file:
+    json.dump(
+        phase10_config,
+        config_file,
+        indent=4,
+        ensure_ascii=False,
+    )
+
+generated_files = [
+    IMPORTANCE_PATH,
+    IMPORTANCE_FIGURE_PDF,
+    IMPORTANCE_FIGURE_PNG,
+    PREDICTION_PROFILE_PATH,
+    ERROR_ANALYSIS_PATH,
+    ERROR_SUMMARY_PATH,
+    METRICS_PATH,
+    CONFIG_PATH,
+]
+
+print("\nPHASE 10: FEATURE IMPORTANCE AND INTERPRETABILITY")
+print("\nGenerated files:")
+
+for output_path in generated_files:
+
+    if not output_path.exists():
+        raise FileNotFoundError(
+            f"Expected output was not generated: {output_path}"
+        )
+
+    print(output_path)
+
+log_progress(
+    "Phase 10 completed: feature importance, prediction profile, "
+    "classification error analysis, and test metrics exported."
+)
+
+print("\nPhase 10 completed successfully.")
